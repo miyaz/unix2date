@@ -1,6 +1,6 @@
 # unix2date
 convert unixtime included in STDIN to datetime and output.  
-"10 digit seconds” and “13 digits milliseconds” are eligible.  
+"10 digit seconds” and “13 digits milliseconds” are subject to conversion.  
 By default, datetime within 365 days before and after the current time will be converted. This can be changed with the -days-ago, -days-later options (number of days).
 
 1. build
