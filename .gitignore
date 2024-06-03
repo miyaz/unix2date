@@ -25,5 +25,3 @@ go.work.sum
 unix2date
 token.txt
 /dist/
-
-dist/
