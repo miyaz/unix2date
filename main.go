@@ -12,14 +12,14 @@ import (
 )
 
 var (
-	daysAgo   int
-	daysLater int
+	daysStart int
+	daysEnd   int
 	now       time.Time
 )
 
 func init() {
-	flag.IntVar(&daysAgo, "days-ago", 365, "Start date of convertible period (days ago from now)")
-	flag.IntVar(&daysLater, "days-later", 365, "End date of convertible period (days later from now)")
+	flag.IntVar(&daysStart, "days-start", 365, "Start date of convertible period (days ago from now)")
+	flag.IntVar(&daysEnd, "days-end", 365, "End date of convertible period (days later from now)")
 	flag.Parse()
 }
 
@@ -58,11 +58,11 @@ func replaceUnixtime2Datetime(text string) string {
 			continue
 		}
 		if now.Sub(timeObject) > 0 {
-			if int(now.Sub(timeObject).Hours()/24) > daysAgo {
+			if int(now.Sub(timeObject).Hours()/24) > daysStart {
 				continue
 			}
 		} else {
-			if int(timeObject.Sub(now).Hours()/24) > daysLater {
+			if int(timeObject.Sub(now).Hours()/24) > daysEnd {
 				continue
 			}
 		}
