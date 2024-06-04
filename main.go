@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 var (
 	daysStart int
 	daysEnd   int
-	now       time.Time
 )
 
 func init() {
@@ -24,11 +24,11 @@ func init() {
 }
 
 func main() {
-	now = time.Now()
+	now := time.Now()
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Println(replaceUnixtime2Datetime(line))
+		fmt.Println(replaceUnixtime2Datetime(line, now))
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -37,36 +37,71 @@ func main() {
 	}
 }
 
-func replaceUnixtime2Datetime(text string) string {
+func replaceUnixtime2Datetime(text string, now time.Time) string {
 	pattern := `(^|[^0-9]?)([0-9]{10,13})([^0-9]?|$)`
 	regex := regexp.MustCompile(pattern)
 	matches := regex.FindAllStringSubmatch(text, -1)
 
+	var unixtimeList []string
 	for _, match := range matches {
-		timeStr := match[2]
+		unixtimeStr := match[2]
+		if !contains(unixtimeList, unixtimeStr) {
+			unixtimeList = append(unixtimeList, unixtimeStr)
+		}
+	}
+	sort.Sort(byLength(unixtimeList))
 
-		var timeObject time.Time
+	for _, unixtimeStr := range unixtimeList {
+		var targetTime time.Time
 		var timeFormat string
-		unixtime, _ := strconv.Atoi(timeStr)
-		if len(timeStr) == 10 {
-			timeObject = time.Unix(int64(unixtime), 0)
+		unixtime, _ := strconv.Atoi(unixtimeStr)
+		if len(unixtimeStr) == 10 {
+			targetTime = time.Unix(int64(unixtime), 0)
 			timeFormat = "2006-01-02T15:04:05Z"
-		} else if len(timeStr) == 13 {
-			timeObject = time.Unix(0, int64(unixtime)*int64(time.Millisecond))
+		} else if len(unixtimeStr) == 13 {
+			targetTime = time.Unix(0, int64(unixtime)*int64(time.Millisecond))
 			timeFormat = "2006-01-02T15:04:05.000Z"
 		} else {
 			continue
 		}
-		if now.Sub(timeObject) > 0 {
-			if int(now.Sub(timeObject).Hours()/24) > daysStart {
-				continue
-			}
-		} else {
-			if int(timeObject.Sub(now).Hours()/24) > daysEnd {
-				continue
-			}
+		if isInConvertiblePeriod(targetTime, now, daysStart, daysEnd) {
+			text = strings.Replace(text, unixtimeStr, targetTime.UTC().Format(timeFormat), -1)
 		}
-		text = strings.Replace(text, timeStr, timeObject.UTC().Format(timeFormat), -1)
 	}
 	return text
+}
+
+func contains(arr []string, str string) bool {
+	for _, v := range arr {
+		if v == str {
+			return true
+		}
+	}
+	return false
+}
+
+func isInConvertiblePeriod(targetTime time.Time, now time.Time, daysStart int, daysEnd int) (isConvertible bool) {
+	if now.Sub(targetTime) > 0 {
+		if int(now.Sub(targetTime).Hours()/24) < daysStart {
+			isConvertible = true
+		}
+	} else {
+		if int(targetTime.Sub(now).Hours()/24) < daysEnd {
+			isConvertible = true
+		}
+	}
+	return
+}
+
+// sort.Interface implementation for sorting slice by length
+type byLength []string
+
+func (s byLength) Len() int {
+	return len(s)
+}
+func (s byLength) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s byLength) Less(i, j int) bool {
+	return len(s[i]) > len(s[j])
 }
