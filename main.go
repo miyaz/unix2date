@@ -20,15 +20,15 @@ var (
 func init() {
 	flag.IntVar(&daysStart, "days-start", 365, "Start date of convertible period (days ago from now)")
 	flag.IntVar(&daysEnd, "days-end", 365, "End date of convertible period (days later from now)")
-	flag.Parse()
 }
 
 func main() {
+	flag.Parse()
 	now := time.Now()
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Println(replaceUnixtime2Datetime(line, now))
+		fmt.Println(replaceUnixtimeToDatetime(line, now))
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -37,7 +37,7 @@ func main() {
 	}
 }
 
-func replaceUnixtime2Datetime(text string, now time.Time) string {
+func replaceUnixtimeToDatetime(text string, now time.Time) string {
 	pattern := `(^|[^0-9]?)([0-9]{10,13})([^0-9]?|$)`
 	regex := regexp.MustCompile(pattern)
 	matches := regex.FindAllStringSubmatch(text, -1)
