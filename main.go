@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -38,20 +36,45 @@ func main() {
 }
 
 func replaceUnixtimeToDatetime(text string, now time.Time) string {
-	pattern := `(^|[^0-9]?)([0-9]{10,13})([^0-9]?|$)`
-	regex := regexp.MustCompile(pattern)
-	matches := regex.FindAllStringSubmatch(text, -1)
-
-	var unixtimeList []string
-	for _, match := range matches {
-		unixtimeStr := match[2]
-		if !contains(unixtimeList, unixtimeStr) {
-			unixtimeList = append(unixtimeList, unixtimeStr)
+	for {
+		ri := getReplaceInfo(text, now)
+		if ri == nil {
+			break
 		}
-	}
-	sort.Sort(byLength(unixtimeList))
+		unixtimeStr := ri.UnixtimeStr
+		startIndex := ri.StartIndex
+		endIndex := ri.EndIndex
+		timeFormat := ri.TimeFormat
 
-	for _, unixtimeStr := range unixtimeList {
+		var targetTime time.Time
+		unixtime, _ := strconv.Atoi(unixtimeStr)
+		if len(unixtimeStr) == 10 {
+			targetTime = time.Unix(int64(unixtime), 0)
+		} else if len(unixtimeStr) == 13 {
+			targetTime = time.Unix(0, int64(unixtime)*int64(time.Millisecond))
+		}
+		datetimeStr := targetTime.UTC().Format(timeFormat)
+		text = text[:startIndex] + datetimeStr + text[endIndex:]
+	}
+
+	return text
+}
+
+type Replacement struct {
+	UnixtimeStr string
+	StartIndex  int
+	EndIndex    int
+	TimeFormat  string
+}
+
+func getReplaceInfo(text string, now time.Time) *Replacement {
+	pattern := `(^|[^0-9])([0-9]{10,13})([^0-9]|$)`
+	regex := regexp.MustCompile(pattern)
+	matches := regex.FindAllStringSubmatchIndex(text, -1)
+	for _, match := range matches {
+		startIndex := match[4]
+		endIndex := match[5]
+		unixtimeStr := text[startIndex:endIndex]
 		var targetTime time.Time
 		var timeFormat string
 		unixtime, _ := strconv.Atoi(unixtimeStr)
@@ -61,23 +84,17 @@ func replaceUnixtimeToDatetime(text string, now time.Time) string {
 		} else if len(unixtimeStr) == 13 {
 			targetTime = time.Unix(0, int64(unixtime)*int64(time.Millisecond))
 			timeFormat = "2006-01-02T15:04:05.000Z"
-		} else {
-			continue
 		}
 		if isInConvertiblePeriod(targetTime, now, daysStart, daysEnd) {
-			text = strings.Replace(text, unixtimeStr, targetTime.UTC().Format(timeFormat), -1)
+			return &Replacement{
+				UnixtimeStr: unixtimeStr,
+				StartIndex:  startIndex,
+				EndIndex:    endIndex,
+				TimeFormat:  timeFormat,
+			}
 		}
 	}
-	return text
-}
-
-func contains(arr []string, str string) bool {
-	for _, v := range arr {
-		if v == str {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 func isInConvertiblePeriod(targetTime time.Time, now time.Time, daysStart int, daysEnd int) (isConvertible bool) {
@@ -91,17 +108,4 @@ func isInConvertiblePeriod(targetTime time.Time, now time.Time, daysStart int, d
 		}
 	}
 	return
-}
-
-// sort.Interface implementation for sorting slice by length
-type byLength []string
-
-func (s byLength) Len() int {
-	return len(s)
-}
-func (s byLength) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-func (s byLength) Less(i, j int) bool {
-	return len(s[i]) > len(s[j])
 }
