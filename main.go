@@ -13,6 +13,8 @@ import (
 var (
 	daysStart int
 	daysEnd   int
+	pattern   string         = `(^|[^0-9])([0-9]{10,13})([^0-9]|$)`
+	regex     *regexp.Regexp = regexp.MustCompile(pattern)
 )
 
 func init() {
@@ -68,8 +70,6 @@ type Replacement struct {
 }
 
 func getReplaceInfo(text string, now time.Time) *Replacement {
-	pattern := `(^|[^0-9])([0-9]{10,13})([^0-9]|$)`
-	regex := regexp.MustCompile(pattern)
 	matches := regex.FindAllStringSubmatchIndex(text, -1)
 	for _, match := range matches {
 		startIndex := match[4]
