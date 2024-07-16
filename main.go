@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	textPattern string         = `(?:^|[^0-9])([12](?:\d{9}|\d{12}))(?:[^0-9]|$)`
+	textPattern string         = `(?:^|[^0-9a-zA-Z-_])([12](?:\d{9}|\d{12}))(?:[^0-9a-zA-Z-_]|$)`
 	regexText   *regexp.Regexp = regexp.MustCompile(textPattern)
 	format10    string         = "2006-01-02T15:04:05Z"
 	format13    string         = "2006-01-02T15:04:05.000Z"
