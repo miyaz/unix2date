@@ -2,8 +2,116 @@ package main
 
 import (
 	"testing"
-	"time"
 )
+
+func TestReplaceUnixtimeToDatetimeFilterTest(t *testing.T) {
+	tests := []struct {
+		name   string
+		param  *Parameter
+		input  string
+		expect bool
+	}{
+		{"not include unixtime with filter",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890123, filterToMS: MAX_UNIXTIME},
+			"", false},
+		{"not include unixtime with filter",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890123, filterToMS: MAX_UNIXTIME},
+			"test", false},
+		{"include unixtime within filter period #1",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: 1234567890000},
+			"1234567890000", true},
+		{"include unixtime within filter period #2",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: MAX_UNIXTIME},
+			"1234567890123", true},
+		{"include unixtime within filter period #3",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: MAX_UNIXTIME},
+			"2345678890", true},
+		{"include unixtime within filter period #4",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890999, filterToMS: 1234567890999},
+			"1234567890999", true},
+		{"include unixtime within filter period #5",
+			&Parameter{filterFlag: true, filterFromMS: MIN_UNIXTIME, filterToMS: 1234567890999},
+			"1234567890", true},
+		{"include unixtime within filter period #6",
+			&Parameter{filterFlag: true, filterFromMS: MIN_UNIXTIME, filterToMS: 1234567890999},
+			"1123456789", true},
+		{"include unixtime not within filter period #1",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: MAX_UNIXTIME},
+			"1234567889999", false},
+		{"include unixtime not within filter period #2",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: 1234567890000},
+			"1234567890001", false},
+		{"include unixtime not within filter period #3",
+			&Parameter{filterFlag: true, filterFromMS: MIN_UNIXTIME, filterToMS: 1234567890000},
+			"1234567890001", false},
+		{"summary",
+			&Parameter{summaryFlag: true},
+			"1234567890001", false},
+		{"include unixtime with invert flag within filter period",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: 1234567890000, invertFlag: true},
+			"1234567890000", false},
+		{"include unixtime with invert flag not within filter period",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890000, filterToMS: 1234567890001, invertFlag: true},
+			"1234567890002", true},
+		{"include unixtime with noConvert flag",
+			&Parameter{noConvFlag: true},
+			"1234567890001", true},
+	}
+	for _, tt := range tests {
+		if actual := replaceUnixtimeToDatetime(tt.input, &Summary{}, tt.param); actual.ShouldOutput != tt.expect {
+			t.Errorf("[ NG ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		} else {
+			//t.Logf("[ OK ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		}
+	}
+}
+
+func TestReplaceUnixtimeToDatetimeNoConvTest(t *testing.T) {
+	tests := []struct {
+		name   string
+		param  *Parameter
+		input  string
+		expect string
+	}{
+		{"include unixtime with noConvert flag",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890123, filterToMS: MAX_UNIXTIME, noConvFlag: true},
+			"1234567890123 2345678901234", "1234567890123 2345678901234"},
+		{"include unixtime without noConvert flag",
+			&Parameter{filterFlag: true, filterFromMS: 1234567890123, filterToMS: MAX_UNIXTIME, noConvFlag: false},
+			" 1234567890123 2345678901234 ", " 2009-02-13T23:31:30.123Z 2044-05-01T01:28:21.234Z "},
+	}
+	for _, tt := range tests {
+		if actual := replaceUnixtimeToDatetime(tt.input, &Summary{}, tt.param); actual.Text != tt.expect {
+			t.Errorf("[ NG ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		} else {
+			//t.Logf("[ OK ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		}
+	}
+}
+
+func TestReplaceUnixtimeToDatetimeWithJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{"add double quote when json format with eol",
+			`{"test":1234567890123`, `{"test":"2009-02-13T23:31:30.123Z"`},
+		{"add double quote when json format with trailing comma",
+			`{"test":1234567890123,`, `{"test":"2009-02-13T23:31:30.123Z",`},
+		{"add double quote when close json with curly bracket",
+			`{"test": 1234567890123}`, `{"test": "2009-02-13T23:31:30.123Z"}`},
+		{"dont add double quote",
+			`{"test" :"1234567890123"}`, `{"test" :"2009-02-13T23:31:30.123Z"}`},
+	}
+	for _, tt := range tests {
+		if actual := replaceUnixtimeToDatetime(tt.input, &Summary{}, &Parameter{}); actual.Text != tt.expect {
+			t.Errorf("[ NG ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		} else {
+			//t.Logf("[ OK ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
+		}
+	}
+}
 
 func TestReplaceUnixtimeToDatetime(t *testing.T) {
 	tests := []struct {
@@ -39,9 +147,7 @@ func TestReplaceUnixtimeToDatetime(t *testing.T) {
 		{"multi bytes #2", "１７２２５４３７６９", "１７２２５４３７６９"},
 	}
 	for _, tt := range tests {
-		unixNow := 1720999999321 // 2024-07-14T23:33:19.321Z
-		now := time.Unix(0, int64(unixNow)*int64(time.Millisecond))
-		if actual := replaceUnixtimeToDatetime(tt.input, now); actual != tt.expect {
+		if actual := replaceUnixtimeToDatetime(tt.input, &Summary{}, &Parameter{}); actual.Text != tt.expect {
 			t.Errorf("[ NG ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
 		} else {
 			//t.Logf("[ OK ] => %s\n   input: %v\n  expect: %v\n  actual: %v", tt.name, tt.input, tt.expect, actual)
