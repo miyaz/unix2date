@@ -10,34 +10,46 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 )
 
 const (
-	APPNAME      = "unix2date"
-	MIN_UNIXTIME = 1000000000000 // 2001-09-09T01:46:40.000Z
-	MAX_UNIXTIME = 2999999999999 // 2065-01-24T05:19:59.999Z
+	APPNAME           = "unix2date"
+	MIN_UNIXTIME      = 1000000000000 // 2001-09-09T01:46:40.000Z
+	MAX_UNIXTIME      = 2999999999999 // 2065-01-24T05:19:59.999Z
+	DEF_QUOTATIONS    = `"`
+	DEF_SEPARATORS    = ` ,\t`
+	DATETIME_FORMAT10 = "2006-01-02T15:04:05Z"
+	DATETIME_FORMAT13 = "2006-01-02T15:04:05.000Z"
+	UNIXTIME_PATTERN  = `([12](?:\d{12}|\d{9}))`
+	TYPE_JSON         = iota
+	TYPE_QT
+	TYPE_SP
 )
 
-var (
-	textPattern string         = `(?:^|[^0-9a-zA-Z-_=\.])([12](?:\d{9}|\d{12}))(?:[^0-9a-zA-Z-_=\.]|$)`
-	regexText   *regexp.Regexp = regexp.MustCompile(textPattern)
-	format10    string         = "2006-01-02T15:04:05Z"
-	format13    string         = "2006-01-02T15:04:05.000Z"
-	jsonPattern string         = `(?:" *:) *([12](?:\d{9}|\d{12})) *(?:[,}]|$)`
-	regexJSON   *regexp.Regexp = regexp.MustCompile(jsonPattern)
-)
+type FlagVariables struct {
+	noConvFlag  bool
+	invertFlag  bool
+	summaryFlag bool
+	filterFrom  string
+	filterTo    string
+	quotations  string
+	separators  string
+}
 
 type Parameter struct {
-	filterFlag   bool
-	noConvFlag   bool
-	invertFlag   bool
-	summaryFlag  bool
-	filterFrom   string
-	filterTo     string
-	filterFromMS int64
-	filterToMS   int64
+	filterFlag      bool
+	noConvFlag      bool
+	invertFlag      bool
+	summaryFlag     bool
+	filterFromMS    int64
+	filterToMS      int64
+	replacePatterns []ReplacePattern
+}
+
+type ReplacePattern struct {
+	Regexp *regexp.Regexp
+	Type   int
 }
 
 type Summary struct {
@@ -54,26 +66,32 @@ type Summary struct {
 
 type Result struct {
 	Text         string
-	ShouldOutput bool
+	NeedToOutput bool
 }
 
-type Replacement struct {
+type ReplaceInfo struct {
 	UnixtimeStr string
 	StartIndex  int
 	EndIndex    int
 	TimeFormat  string
-	JSONFormat  bool
+	NeedQuote   bool
 }
 
 func main() {
-	s := Summary{}
-	p := initParameters()
+	s := &Summary{}
+	fv, fs := parseFlagSet()
+	p, err := validateFlagVariables(fv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fs.Usage()
+		os.Exit(2)
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
-		result := replaceUnixtimeToDatetime(line, &s, &p)
-		if result.ShouldOutput {
+		result := replaceUnixtimeToDatetime(line, s, p)
+		if result.NeedToOutput {
 			fmt.Println(result.Text)
 		}
 	}
@@ -83,68 +101,77 @@ func main() {
 		os.Exit(1)
 	}
 
-	if p.summaryFlag {
-		outputSummary(&s)
+	if fv.summaryFlag {
+		outputSummary(s)
 	}
 }
 
-func initParameters() Parameter {
-	var p Parameter
-	testing.Init()
-	flag.CommandLine.Init(APPNAME, flag.ExitOnError)
-	flag.CommandLine.Usage = func() {
-		o := flag.CommandLine.Output()
+func parseFlagSet() (*FlagVariables, *flag.FlagSet) {
+	fv := FlagVariables{}
+	flagSet := flag.NewFlagSet(APPNAME, flag.ExitOnError)
+	flagSet.Usage = func() {
+		o := flagSet.Output()
+		fmt.Fprintf(o, "---\n")
 		fmt.Fprintf(o, "Usage:\n")
-		fmt.Fprintf(o, "  %s [-s]\n", flag.CommandLine.Name())
-		fmt.Fprintf(o, "  %s [-ni] [-f YYYY-mm-ddTHH:MM:SS(.NNN)Z] [-t YYYY-mm-ddTHH:MM:SS(.NNN)Z]\n", flag.CommandLine.Name())
+		fmt.Fprintf(o, "  %s [-s]\n", flagSet.Name())
+		fmt.Fprintf(o, "  %s [-ni] [-f YYYY-mm-ddTHH:MM:SS(.NNN)Z] [-t YYYY-mm-ddTHH:MM:SS(.NNN)Z]\n", flagSet.Name())
 		fmt.Fprintf(o, "Options:\n")
-		fmt.Fprintf(o, "  -s (--summary)         Output only summary. (this option cannot be used together other options\n")
-		fmt.Fprintf(o, "  -n (--no-convert)      Output without converting unixtime\n")
-		fmt.Fprintf(o, "  -i (--invert-filter)   Invert and output filtering results\n")
+		fmt.Fprintf(o, "  -s (--summary)         Output only summary. (this option cannot be used with other options\n")
+		fmt.Fprintf(o, "  -n (--no-convert)      Output unixtime without converting\n")
+		fmt.Fprintf(o, "  -i (--invert-filter)   Invert and output filtered results\n")
 		fmt.Fprintf(o, "  -f (--filter-from) [filter start date (ex. 2024-07-01T00:30:00Z)]\n")
 		fmt.Fprintf(o, "  -t (--filter-to)   [filter end date   (ex. 2024-07-01T01:00:00Z)]\n")
 		fmt.Fprintf(o, "                         Output only lines containing unixtime within specified period\n")
+		fmt.Fprintf(o, "  -qt (--quotations) [characters for quotations (default: `\"`)\n")
+		fmt.Fprintf(o, "  -sp (--separators) [characters for separators (default: ` ,\\t`)\n")
+		fmt.Fprintf(o, "                         Set characters to detect unixtime\n")
 	}
 
-	flag.StringVar(&p.filterFrom, "filter-from", "", "")
-	flag.StringVar(&p.filterFrom, "f", "", "")
-	flag.StringVar(&p.filterTo, "filter-to", "", "")
-	flag.StringVar(&p.filterTo, "t", "", "")
-	flag.BoolVar(&p.noConvFlag, "no-convert", false, "")
-	flag.BoolVar(&p.noConvFlag, "n", false, "")
-	flag.BoolVar(&p.invertFlag, "invert-filter", false, "")
-	flag.BoolVar(&p.invertFlag, "i", false, "")
-	flag.BoolVar(&p.summaryFlag, "summary", false, "")
-	flag.BoolVar(&p.summaryFlag, "s", false, "")
+	flagSet.StringVar(&fv.filterFrom, "filter-from", "", "")
+	flagSet.StringVar(&fv.filterFrom, "f", "", "")
+	flagSet.StringVar(&fv.filterTo, "filter-to", "", "")
+	flagSet.StringVar(&fv.filterTo, "t", "", "")
+	flagSet.BoolVar(&fv.noConvFlag, "no-convert", false, "")
+	flagSet.BoolVar(&fv.noConvFlag, "n", false, "")
+	flagSet.BoolVar(&fv.invertFlag, "invert-filter", false, "")
+	flagSet.BoolVar(&fv.invertFlag, "i", false, "")
+	flagSet.BoolVar(&fv.summaryFlag, "summary", false, "")
+	flagSet.BoolVar(&fv.summaryFlag, "s", false, "")
+	flagSet.StringVar(&fv.quotations, "quotations", DEF_QUOTATIONS, "")
+	flagSet.StringVar(&fv.quotations, "qt", DEF_QUOTATIONS, "")
+	flagSet.StringVar(&fv.separators, "separators", DEF_SEPARATORS, "")
+	flagSet.StringVar(&fv.separators, "sp", DEF_SEPARATORS, "")
 
-	flag.Parse()
+	flagSet.Parse(os.Args[1:])
 
-	if p.filterFrom != "" {
+	return &fv, flagSet
+}
+
+func validateFlagVariables(fv *FlagVariables) (*Parameter, error) {
+	p := Parameter{noConvFlag: fv.noConvFlag, invertFlag: fv.invertFlag, summaryFlag: fv.summaryFlag}
+
+	if fv.filterFrom != "" {
 		p.filterFlag = true
-		if len(p.filterFrom) == 20 {
-			p.filterFrom = strings.Replace(p.filterFrom, "Z", ".000Z", 1)
+		if len(fv.filterFrom) == 20 {
+			fv.filterFrom = strings.Replace(fv.filterFrom, "Z", ".000Z", 1)
 		}
-		unixtime, err := parsedUnixtime(p.filterFrom)
+		unixtime, err := parsedUnixtime(fv.filterFrom)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			flag.CommandLine.Usage()
-			os.Exit(2)
+			return nil, err
 		}
 		p.filterFromMS = unixtime
 	} else {
 		p.filterFromMS = MIN_UNIXTIME
 	}
 
-	if p.filterTo != "" {
+	if fv.filterTo != "" {
 		p.filterFlag = true
-		if len(p.filterTo) == 20 {
-			p.filterTo = strings.Replace(p.filterTo, "Z", ".999Z", 1)
+		if len(fv.filterTo) == 20 {
+			fv.filterTo = strings.Replace(fv.filterTo, "Z", ".999Z", 1)
 		}
-		unixtime, err := parsedUnixtime(p.filterTo)
+		unixtime, err := parsedUnixtime(fv.filterTo)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			flag.CommandLine.Usage()
-			os.Exit(2)
+			return nil, err
 		}
 		p.filterToMS = unixtime
 	} else {
@@ -152,28 +179,57 @@ func initParameters() Parameter {
 	}
 
 	if p.filterToMS < p.filterFromMS {
-		fmt.Fprintln(os.Stderr, "--filter-from(-f) value cannot be set larger than --filter-to(-t) value")
-		flag.CommandLine.Usage()
-		os.Exit(2)
+		return nil, fmt.Errorf("--filter-from(-f) value cannot be newer than --filter-to(-t) value")
 	}
 
-	if p.summaryFlag &&
-		(p.filterFlag || p.invertFlag || p.noConvFlag) {
-		fmt.Fprintln(os.Stderr, "--summary(-s) option cannot be used together other options")
-		flag.CommandLine.Usage()
-		os.Exit(2)
+	if fv.summaryFlag &&
+		(p.filterFlag || fv.invertFlag || fv.noConvFlag) {
+		return nil, fmt.Errorf("--summary(-s) option cannot be used with other options")
 	}
-	return p
+
+	if fv.invertFlag && !p.filterFlag {
+		return nil, fmt.Errorf("--invert(-i) option must be used with --filter-from(-f) or --filter-to(-t) option")
+	}
+
+	p.replacePatterns = generateReplacePatternList(fv.quotations, fv.separators)
+
+	return &p, nil
+}
+
+func generateReplacePatternList(quotations, separators string) []ReplacePattern {
+	var replacePatterns []ReplacePattern
+	if len(separators) > 0 {
+		regexStr := `(?:^|[` + separators + `])` + UNIXTIME_PATTERN + `(?:[` + separators + `]|$)`
+		replacePattern := ReplacePattern{
+			Regexp: regexp.MustCompile(regexStr),
+			Type:   TYPE_SP,
+		}
+		replacePatterns = append(replacePatterns, replacePattern)
+	}
+	if len(quotations) > 0 {
+		regexStr := `(?:[` + quotations + `])` + UNIXTIME_PATTERN + `(?:[` + quotations + `])`
+		replacePattern := ReplacePattern{
+			Regexp: regexp.MustCompile(regexStr),
+			Type:   TYPE_QT,
+		}
+		replacePatterns = append(replacePatterns, replacePattern)
+	}
+	replacePattern := ReplacePattern{
+		Regexp: regexp.MustCompile(`(?:" *:) *` + UNIXTIME_PATTERN + ` *(?:[,}]|$)`),
+		Type:   TYPE_JSON,
+	}
+	replacePatterns = append(replacePatterns, replacePattern)
+	return replacePatterns
 }
 
 func outputSummary(s *Summary) {
 	filterCommandExample := APPNAME
 	if s.OldestUnixtime > 0 {
-		s.OldestDatetime = time.Unix(0, s.OldestUnixtime*int64(time.Millisecond)).UTC().Format(format10)
+		s.OldestDatetime = time.Unix(0, s.OldestUnixtime*int64(time.Millisecond)).UTC().Format(DATETIME_FORMAT10)
 		filterCommandExample += " -f " + s.OldestDatetime
 	}
 	if s.NewestUnixtime > 0 {
-		s.NewestDatetime = time.Unix(0, s.NewestUnixtime*int64(time.Millisecond)).UTC().Format(format10)
+		s.NewestDatetime = time.Unix(0, s.NewestUnixtime*int64(time.Millisecond)).UTC().Format(DATETIME_FORMAT10)
 		filterCommandExample += " -t " + s.NewestDatetime
 	}
 	if s.OldestUnixtime > 0 || s.NewestUnixtime > 0 {
@@ -190,7 +246,7 @@ func parsedUnixtime(datetimeStr string) (int64, error) {
 	if len(datetimeStr) != 24 {
 		return 0, fmt.Errorf("invalid datetime")
 	}
-	t, err := time.Parse(format13, datetimeStr)
+	t, err := time.Parse(DATETIME_FORMAT13, datetimeStr)
 	if err != nil {
 		return 0, err
 	}
@@ -218,7 +274,7 @@ func replaceUnixtimeToDatetime(text string, s *Summary, p *Parameter) *Result {
 	lineContainUnixtime := false
 	inFilterPeriod := false
 	for {
-		ri := getReplaceInfo(text)
+		ri := getReplaceInfo(text, p.replacePatterns)
 		if ri == nil {
 			break
 		}
@@ -233,7 +289,7 @@ func replaceUnixtimeToDatetime(text string, s *Summary, p *Parameter) *Result {
 			targetTime = time.Unix(0, int64(unixtime)*int64(time.Millisecond))
 		}
 		datetimeStr := targetTime.UTC().Format(ri.TimeFormat)
-		if ri.JSONFormat {
+		if ri.NeedQuote {
 			datetimeStr = `"` + datetimeStr + `"`
 		}
 		text = text[:ri.StartIndex] + datetimeStr + text[ri.EndIndex:]
@@ -290,27 +346,29 @@ func IsInFilterPeriod(unixtime int64, p *Parameter) bool {
 	return false
 }
 
-func getReplaceInfo(text string) *Replacement {
-	if textMatch := regexText.FindStringSubmatchIndex(text); textMatch != nil {
-		startIndex := textMatch[2]
-		endIndex := textMatch[3]
-		unixtimeStr := text[startIndex:endIndex]
-		var timeFormat string
-		if len(unixtimeStr) == 10 {
-			timeFormat = format10
-		} else if len(unixtimeStr) == 13 {
-			timeFormat = format13
+func getReplaceInfo(text string, replacePatterns []ReplacePattern) *ReplaceInfo {
+	for _, rp := range replacePatterns {
+		if textMatch := rp.Regexp.FindStringSubmatchIndex(text); textMatch != nil {
+			startIndex := textMatch[2]
+			endIndex := textMatch[3]
+			unixtimeStr := text[startIndex:endIndex]
+			var timeFormat string
+			if len(unixtimeStr) == 10 {
+				timeFormat = DATETIME_FORMAT10
+			} else if len(unixtimeStr) == 13 {
+				timeFormat = DATETIME_FORMAT13
+			}
+			replaceInfo := &ReplaceInfo{
+				UnixtimeStr: unixtimeStr,
+				StartIndex:  startIndex,
+				EndIndex:    endIndex,
+				TimeFormat:  timeFormat,
+			}
+			if rp.Type == TYPE_JSON {
+				replaceInfo.NeedQuote = true
+			}
+			return replaceInfo
 		}
-		replacement := &Replacement{
-			UnixtimeStr: unixtimeStr,
-			StartIndex:  startIndex,
-			EndIndex:    endIndex,
-			TimeFormat:  timeFormat,
-		}
-		if jsonMatch := regexJSON.FindStringSubmatchIndex(text); jsonMatch != nil && startIndex == jsonMatch[2] {
-			replacement.JSONFormat = true
-		}
-		return replacement
 	}
 	return nil
 }
