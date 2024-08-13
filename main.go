@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,6 +56,7 @@ type ReplacePattern struct {
 }
 
 type Summary struct {
+	mu                           *sync.Mutex
 	TotalNumberOfLines           int64  `json:"TotalNumberOfLines"`
 	TotalNumberOfUnixtime        int64  `json:"TotalNumberOfUnixtime"`
 	NumberOfLinesContainUnixtime int64  `json:"NumberOfLinesContainUnixtime"`
@@ -64,9 +68,21 @@ type Summary struct {
 	FilterCommandExample         string `json:"FilterCommandExample,omitempty"`
 }
 
+type Input struct {
+	Index int64
+	Text  string
+}
+
 type Result struct {
+	Index        int64
 	Text         string
 	NeedToOutput bool
+}
+
+type Output struct {
+	mu         *sync.Mutex
+	Index      int64
+	BufResults map[int64]*Result
 }
 
 type ReplaceInfo struct {
@@ -78,7 +94,7 @@ type ReplaceInfo struct {
 }
 
 func main() {
-	s := &Summary{}
+	s := &Summary{mu: &sync.Mutex{}}
 	fv, fs := parseFlagSet()
 	p, err := validateFlagVariables(fv)
 	if err != nil {
@@ -87,14 +103,28 @@ func main() {
 		os.Exit(2)
 	}
 
+	var wg sync.WaitGroup
+	var lineCount int64
+	output := &Output{mu: &sync.Mutex{}, BufResults: map[int64]*Result{}}
+	limiter := make(chan struct{}, runtime.NumCPU())
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
-		result := replaceUnixtimeToDatetime(line, s, p)
-		if result.NeedToOutput {
-			fmt.Println(result.Text)
-		}
+		input := &Input{Index: lineCount, Text: line}
+		limiter <- struct{}{}
+		wg.Add(1)
+		go func(input *Input, output *Output) {
+			defer func() {
+				<-limiter
+				wg.Done()
+			}()
+			result := replaceUnixtimeToDatetime(input, s, p)
+			outputLines(output, result)
+		}(input, output)
+		lineCount++
 	}
+	wg.Wait()
+	outputLines(output, nil)
 
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -103,6 +133,25 @@ func main() {
 
 	if fv.summaryFlag {
 		outputSummary(s)
+	}
+}
+
+func outputLines(output *Output, result *Result) {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	if result != nil {
+		output.BufResults[result.Index] = result
+	}
+	for len(output.BufResults) != 0 {
+		if tmpRes, ok := output.BufResults[output.Index]; ok {
+			if tmpRes.NeedToOutput {
+				fmt.Println(tmpRes.Text)
+			}
+			delete(output.BufResults, output.Index)
+			output.Index++
+		} else {
+			break
+		}
 	}
 }
 
@@ -269,8 +318,9 @@ func jsonMarshalIndent(t interface{}) ([]byte, error) {
 	return indentBuffer.Bytes(), err
 }
 
-func replaceUnixtimeToDatetime(text string, s *Summary, p *Parameter) *Result {
-	orgText := text
+func replaceUnixtimeToDatetime(input *Input, s *Summary, p *Parameter) *Result {
+	text := input.Text
+	orgText := input.Text
 	lineContainUnixtime := false
 	inFilterPeriod := false
 	for {
@@ -278,7 +328,7 @@ func replaceUnixtimeToDatetime(text string, s *Summary, p *Parameter) *Result {
 		if ri == nil {
 			break
 		}
-		s.TotalNumberOfUnixtime++
+		atomic.AddInt64(&s.TotalNumberOfUnixtime, 1)
 		lineContainUnixtime = true
 
 		var targetTime time.Time
@@ -301,34 +351,36 @@ func replaceUnixtimeToDatetime(text string, s *Summary, p *Parameter) *Result {
 		updateUnixtimePeriod(unixMilli, s)
 	}
 
-	s.TotalNumberOfLines++
+	atomic.AddInt64(&s.TotalNumberOfLines, 1)
 	if lineContainUnixtime {
-		s.NumberOfLinesContainUnixtime++
+		atomic.AddInt64(&s.NumberOfLinesContainUnixtime, 1)
 	} else {
-		s.NumberOfLinesWithoutUnixtime++
+		atomic.AddInt64(&s.NumberOfLinesWithoutUnixtime, 1)
 	}
 
 	if p.summaryFlag {
-		return &Result{text, false}
+		return &Result{input.Index, text, false}
 	} else if p.filterFlag {
 		if (p.invertFlag && !inFilterPeriod) || (!p.invertFlag && inFilterPeriod) {
 			if p.noConvFlag {
-				return &Result{orgText, true}
+				return &Result{input.Index, orgText, true}
 			} else {
-				return &Result{text, true}
+				return &Result{input.Index, text, true}
 			}
 		}
 	} else {
 		if p.noConvFlag {
-			return &Result{orgText, true}
+			return &Result{input.Index, orgText, true}
 		} else {
-			return &Result{text, true}
+			return &Result{input.Index, text, true}
 		}
 	}
-	return &Result{text, false}
+	return &Result{input.Index, text, false}
 }
 
 func updateUnixtimePeriod(unixtime int64, s *Summary) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.NewestUnixtime < unixtime {
 		s.NewestUnixtime = unixtime
 	}
