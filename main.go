@@ -185,7 +185,7 @@ func parseFlagSet() (*FlagVariables, *flag.FlagSet) {
 		fmt.Fprintf(o, "                         Set characters to detect unixtime\n")
 	}
 
-	flagSet.BoolVar(&versionFlag, "v", false, "")
+	flagSet.BoolVar(&VersionFlag, "v", false, "")
 	flagSet.StringVar(&fv.filterFrom, "filter-from", "", "")
 	flagSet.StringVar(&fv.filterFrom, "f", "", "")
 	flagSet.StringVar(&fv.filterTo, "filter-to", "", "")
