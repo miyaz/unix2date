@@ -16,6 +16,11 @@ import (
 	"time"
 )
 
+var (
+	Version     = "unset"
+	VersionFlag bool
+)
+
 const (
 	APPNAME           = "unix2date"
 	MIN_UNIXTIME      = 1000000000000 // 2001-09-09T01:46:40.000Z
@@ -96,6 +101,10 @@ type ReplaceInfo struct {
 func main() {
 	s := &Summary{mu: &sync.Mutex{}}
 	fv, fs := parseFlagSet()
+	if VersionFlag {
+		fmt.Println(Version)
+		os.Exit(0)
+	}
 	p, err := validateFlagVariables(fv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -176,6 +185,7 @@ func parseFlagSet() (*FlagVariables, *flag.FlagSet) {
 		fmt.Fprintf(o, "                         Set characters to detect unixtime\n")
 	}
 
+	flagSet.BoolVar(&versionFlag, "v", false, "")
 	flagSet.StringVar(&fv.filterFrom, "filter-from", "", "")
 	flagSet.StringVar(&fv.filterFrom, "f", "", "")
 	flagSet.StringVar(&fv.filterTo, "filter-to", "", "")

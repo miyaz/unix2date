@@ -9,6 +9,7 @@ builds:
     binary: unix2date
     ldflags:
       - -s -w
+      - -X main.Version={{.Version}}
     goos:
       - darwin
       - linux
