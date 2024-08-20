@@ -165,7 +165,7 @@ func parseFlagSet() (*FlagVariables, *flag.FlagSet) {
 		fmt.Fprintf(o, "  %s [-s]\n", flagSet.Name())
 		fmt.Fprintf(o, "  %s [-ni] [-f YYYY-mm-ddTHH:MM:SS(.NNN)Z] [-t YYYY-mm-ddTHH:MM:SS(.NNN)Z]\n", flagSet.Name())
 		fmt.Fprintf(o, "Options:\n")
-		fmt.Fprintf(o, "  -s (--summary)         Output only summary. (this option cannot be used with other options\n")
+		fmt.Fprintf(o, "  -s (--summary)         Output only summary. (this option cannot be used with {-n,-i,-f,-t} options\n")
 		fmt.Fprintf(o, "  -n (--no-convert)      Output unixtime without converting\n")
 		fmt.Fprintf(o, "  -i (--invert-filter)   Invert and output filtered results\n")
 		fmt.Fprintf(o, "  -f (--filter-from) [filter start date (ex. 2024-07-01T00:30:00Z)]\n")
